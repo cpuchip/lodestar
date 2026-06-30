@@ -1,0 +1,16 @@
+# binaries
+/lodestar
+/lodestar.exe
+*.exe
+*.out
+# go
+/bin/
+/dist/
+*.test
+*.prof
+# corpus checkouts (cloned for dev/test — not committed)
+/corpus/
+# editor / os
+.DS_Store
+.idea/
+.vscode/
