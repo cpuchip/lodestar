@@ -23,6 +23,7 @@ import (
 	"github.com/cpuchip/lodestar/internal/gravity"
 	"github.com/cpuchip/lodestar/internal/parse"
 	"github.com/cpuchip/lodestar/internal/resolve"
+	"github.com/cpuchip/lodestar/internal/split"
 )
 
 const tagline = "lodestar — navigate any codebase by its gravity"
@@ -30,6 +31,7 @@ const tagline = "lodestar — navigate any codebase by its gravity"
 func main() {
 	world := flag.String("world", "", "world (service) name for a single repo; defaults to the directory's base name")
 	gravityReport := flag.Bool("gravity", false, "also print the gravity/black-hole report (JSON) to stderr")
+	splitServices := flag.Bool("split", false, "split multi-service monorepos into per-service worlds (cmd/* gated by charts/*) before resolving cross-service edges")
 	flag.Usage = usage
 	flag.Parse()
 	repos := flag.Args()
@@ -52,6 +54,12 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "lodestar: parsing %s: %v\n", repo, err)
 			os.Exit(1)
+		}
+		// Split a multi-service monorepo into per-service worlds BEFORE the graphs
+		// merge + resolve, so an intra-repo service→service call surfaces as a real
+		// cross-service edge instead of vanishing inside one repo-world.
+		if *splitServices {
+			split.SplitWorlds(g, name, repo, split.DefaultOptions())
 		}
 		merge(combined, g)
 		// Capture git provenance once per world (branch-aware world-graph, #298).
