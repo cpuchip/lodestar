@@ -121,6 +121,11 @@ func ParseDir(world, dir string) (*graph.Graph, error) {
 		if isHelmValuesFile(d.Name()) {
 			return parseHelmValues(g, world, filepath.ToSlash(rel), path)
 		}
+		// go.mod: the module a repo publishes + the modules it requires — the
+		// library-coupling backbone the runtime resolvers can't see.
+		if isGoModFile(d.Name()) {
+			return parseGoMod(g, world, filepath.ToSlash(rel), path)
+		}
 		lang := langForPath(langs, path)
 		if lang == nil {
 			return nil
