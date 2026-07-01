@@ -43,11 +43,29 @@ var grpcNonServices = map[string]bool{
 	"GCP": true, "OAuth2": true, "Default": true,
 }
 
+// mockPrefixes are the leading tokens of a generated test double, not a real gRPC
+// stub: NewMockFooClient / NewFakeFooClient / RegisterStubFooServer etc. gomock,
+// mockery, and hand-rolled fakes dominate the raw New*Client/Register*Server hits
+// (≈60% on a real corpus) and never represent a live service edge — the key-join
+// would drop them anyway, but keeping them out of the graph removes the node noise
+// and the risk of a coincidental collision with a real service name.
+var mockPrefixes = []string{"Mock", "Fake", "Stub", "Spy", "Mocked"}
+
+// isMockName reports whether a service name is a test double by its leading token.
+func isMockName(svc string) bool {
+	for _, p := range mockPrefixes {
+		if strings.HasPrefix(svc, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // grpcServiceFromClientCtor extracts the service name from NewXxxClient.
 func grpcServiceFromClientCtor(name string) (string, bool) {
 	if strings.HasPrefix(name, "New") && strings.HasSuffix(name, "Client") && len(name) > len("NewClient") {
 		svc := name[len("New") : len(name)-len("Client")]
-		if grpcNonServices[svc] {
+		if grpcNonServices[svc] || isMockName(svc) {
 			return "", false
 		}
 		return svc, true
@@ -59,7 +77,7 @@ func grpcServiceFromClientCtor(name string) (string, bool) {
 func grpcServiceFromServerReg(name string) (string, bool) {
 	if strings.HasPrefix(name, "Register") && strings.HasSuffix(name, "Server") && len(name) > len("RegisterServer") {
 		svc := name[len("Register") : len(name)-len("Server")]
-		if grpcNonServices[svc] || svc == "Health" || svc == "ServerReflection" {
+		if grpcNonServices[svc] || isMockName(svc) || svc == "Health" || svc == "ServerReflection" {
 			return "", false
 		}
 		return svc, true
