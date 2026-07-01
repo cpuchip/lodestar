@@ -97,14 +97,15 @@ func pyHTTPClient(p *fileCtx, call *sitter.Node) {
 	if !ok {
 		return
 	}
-	rawURL, ok := p.pyFirstArgString(call.ChildByFieldName("arguments"))
-	if !ok {
+	args := call.ChildByFieldName("arguments")
+	if args == nil || args.NamedChildCount() == 0 {
 		return
 	}
-	path := httpURLPath(rawURL)
-	if path == "" {
-		return
-	}
-	key := contracts.NormalizeHTTPKey(method, path)
-	p.addContract(graph.KindHTTPClient, key, map[string]string{"method": method, "path": path, "url": rawURL})
+	// First arg is the URL: a plain string literal (existing path via httpURLPath),
+	// or a concatenation / f-string (base + "/users/" + uid · f"{base}/users/{uid}")
+	// reconstructed to a templated path. pyStringLit fails on an f-string, so the
+	// reconstruction fallback picks it up.
+	urlNode := args.NamedChild(0)
+	s, ok := p.pyStringLit(urlNode)
+	p.emitHTTPClientFromNode(method, urlNode, s, ok)
 }

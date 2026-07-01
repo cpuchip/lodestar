@@ -73,11 +73,25 @@ func extractCSharpHTTP(p *fileCtx, root *sitter.Node) {
 			return
 		}
 		if m, ok := csHTTPClientVerbs[verb]; ok {
-			if url, ok := p.csFirstArgString(args); ok {
-				p.emitHTTPClient(m, url)
+			if args != nil && args.NamedChildCount() > 0 {
+				p.emitCSClientURL(m, args.NamedChild(0))
 			}
 		}
 	})
+}
+
+// emitCSClientURL emits a consumer for an HttpClient call argument: a plain string
+// literal (existing path), or a concatenation / interpolated string
+// (baseUrl + "/api/v1/svc/things/" + id · $"{baseUrl}/api/v1/svc/things/{id}")
+// reconstructed to a templated path. The C# `argument` wrapper is unwrapped first;
+// csStringLit fails on an interpolated string, so reconstruction picks it up.
+func (p *fileCtx) emitCSClientURL(method string, arg *sitter.Node) {
+	node := arg
+	if node.Type() == "argument" && node.NamedChildCount() > 0 {
+		node = node.NamedChild(0)
+	}
+	s, ok := p.csStringLit(node)
+	p.emitHTTPClientFromNode(method, node, s, ok)
 }
 
 // joinAspNetPath joins an ASP.NET controller [Route] base with a method route

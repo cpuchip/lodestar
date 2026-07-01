@@ -69,18 +69,16 @@ var tsHTTPClientVerbs = map[string]string{
 	"patch": "PATCH", "head": "HEAD",
 }
 
-// tsEmitHTTPClient emits a consumer node for a client call whose first arg is a URL
-// literal. fetch/axios default to GET; a method= option on fetch is not read (see
-// the deferrals note) — the reliable literal path is what we key on.
+// tsEmitHTTPClient emits a consumer node for a client call whose first arg is a URL:
+// a plain string literal (existing path via httpURLPath), or a concatenation /
+// template string (base + "/users/" + id · `${base}/users/${id}`) reconstructed to a
+// templated path. tsStringLit fails on a template_string, so the reconstruction
+// fallback picks it up. fetch/axios default to GET; a method= option is not read.
 func (p *fileCtx) tsEmitHTTPClient(method string, args *sitter.Node) {
-	rawURL, ok := p.tsFirstArgString(args)
-	if !ok {
+	if args == nil || args.NamedChildCount() == 0 {
 		return
 	}
-	path := httpURLPath(rawURL)
-	if path == "" {
-		return
-	}
-	key := contracts.NormalizeHTTPKey(method, path)
-	p.addContract(graph.KindHTTPClient, key, map[string]string{"method": method, "path": path, "url": rawURL})
+	urlNode := args.NamedChild(0)
+	s, ok := p.tsStringLit(urlNode)
+	p.emitHTTPClientFromNode(method, urlNode, s, ok)
 }

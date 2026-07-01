@@ -36,11 +36,12 @@ func extractGoHTTP(p *fileCtx, root *sitter.Node) {
 		if verb == "" {
 			return
 		}
-		args := p.stringArgs(n.ChildByFieldName("arguments"))
+		argList := n.ChildByFieldName("arguments")
+		args := p.stringArgs(argList)
 
 		// Consumers live on the http package.
 		if operand == "http" {
-			if goEmitGoHTTPClient(p, verb, args) {
+			if goEmitGoHTTPClient(p, verb, argList) {
 				return
 			}
 		}
@@ -80,25 +81,44 @@ var goHTTPMethods = map[string]string{
 var goHTTPClientVerbs = map[string]string{"Get": "GET", "Post": "POST", "Head": "HEAD", "PostForm": "POST"}
 
 // goEmitGoHTTPClient handles http.* consumer calls; returns true if it consumed
-// the call as a client (so it is not also considered a route).
-func goEmitGoHTTPClient(p *fileCtx, verb string, args []string) bool {
+// the call as a client (so it is not also considered a route). The URL argument is
+// taken as a NODE (not a pre-filtered literal) so a concatenated URL —
+// http.Get(host + "/products/" + id) — can be reconstructed, not skipped.
+func goEmitGoHTTPClient(p *fileCtx, verb string, argList *sitter.Node) bool {
 	switch verb {
 	case "Get", "Post", "Head", "PostForm":
-		if len(args) == 0 {
-			return true // recognized as a client call, but URL is dynamic — skip, don't fall through
+		if argList != nil && argList.NamedChildCount() > 0 {
+			p.emitGoClientURL(goHTTPClientVerbs[verb], argList.NamedChild(0))
 		}
-		p.emitHTTPClient(goHTTPClientVerbs[verb], args[0])
 		return true
 	case "NewRequest", "NewRequestWithContext":
-		// string args are [method, url] (ctx/body are not string literals)
-		if len(args) >= 2 {
-			if m, ok := goHTTPMethods[strings.ToUpper(args[0])]; ok {
-				p.emitHTTPClient(m, args[1])
-			}
+		// The method is a string literal and the URL is the argument right after it:
+		// NewRequest(method, url, body) → method at index 0; NewRequestWithContext(
+		// ctx, method, url, body) → method at index 1 (ctx/body are not literals).
+		mi := 0
+		if verb == "NewRequestWithContext" {
+			mi = 1
+		}
+		if argList == nil || int(argList.NamedChildCount()) < mi+2 {
+			return true
+		}
+		ms, ok := p.stringLit(argList.NamedChild(mi))
+		if !ok {
+			return true
+		}
+		if m, ok := goHTTPMethods[strings.ToUpper(ms)]; ok {
+			p.emitGoClientURL(m, argList.NamedChild(mi+1))
 		}
 		return true
 	}
 	return false
+}
+
+// emitGoClientURL emits a consumer for a Go client URL node: a full-URL literal via
+// the existing path, else a reconstructed templated path for a concatenation.
+func (p *fileCtx) emitGoClientURL(method string, node *sitter.Node) {
+	s, ok := p.stringLit(node)
+	p.emitHTTPClientFromNode(method, node, s, ok)
 }
 
 // goEmitGoHTTPRoute handles server-route producers.
@@ -134,14 +154,11 @@ func goEmitGoHTTPRoute(p *fileCtx, operand, verb string, args []string) {
 	p.addContract(graph.KindHTTPEndpoint, key, map[string]string{"method": method, "path": path})
 }
 
-// emitHTTPClient emits a consumer node for a client call to url (a string literal).
+// emitHTTPClient emits a consumer node for a client call to a full-URL/relative
+// literal (its path pulled out by httpURLPath). Reconstructed concatenations go
+// through emitHTTPClientPath directly; both share the same emit tail.
 func (p *fileCtx) emitHTTPClient(method, rawURL string) {
-	path := httpURLPath(rawURL)
-	if path == "" {
-		return // couldn't extract a path statically
-	}
-	key := contracts.NormalizeHTTPKey(method, path)
-	p.addContract(graph.KindHTTPClient, key, map[string]string{"method": method, "path": path, "url": rawURL})
+	p.emitHTTPClientPath(method, httpURLPath(rawURL), rawURL)
 }
 
 // httpURLPath pulls the path out of a client URL literal: a full URL yields its

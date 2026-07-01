@@ -67,13 +67,26 @@ var javaMappingMethods = map[string]string{
 	"DeleteMapping": "DELETE", "PatchMapping": "PATCH",
 }
 
+// javaMappingPath returns a Spring mapping annotation's URL, honoring the bare
+// positional string (@GetMapping("/x")) AND both the `value` and `path` attributes
+// (@GetMapping(path = "/x")). Spring declares value and path as aliases, so a route
+// may use either — and in train-ticket `path =` is in fact the MORE common form, so
+// reading only `value` dropped the majority of routes (and every cross-edge that
+// would have paired with them).
+func (p *fileCtx) javaMappingPath(ann *sitter.Node) (string, bool) {
+	if s, ok := p.javaAnnotationValue(ann, "value"); ok {
+		return s, true
+	}
+	return p.javaAnnotationValue(ann, "path")
+}
+
 // javaClassBasePath returns the class-level @RequestMapping base path, or "".
 func (p *fileCtx) javaClassBasePath(n *sitter.Node) string {
 	for _, ann := range javaAnnotations(n) {
 		if p.javaAnnotationName(ann) != "RequestMapping" {
 			continue
 		}
-		if path, ok := p.javaAnnotationValue(ann, "value"); ok && path != "" {
+		if path, ok := p.javaMappingPath(ann); ok && path != "" {
 			return path
 		}
 	}
@@ -97,8 +110,8 @@ func (p *fileCtx) javaHTTPRoute(m *sitter.Node, base string) {
 		} else {
 			continue
 		}
-		path, _ := p.javaAnnotationValue(ann, "value") // "" is valid (base-only route)
-		full := joinRoutePath(base, path)             // Spring joins method path onto class base
+		path, _ := p.javaMappingPath(ann)  // "" is valid (base-only route); value or path
+		full := joinRoutePath(base, path) // Spring joins method path onto class base
 		if !strings.HasPrefix(full, "/") {
 			continue
 		}
@@ -169,25 +182,31 @@ var javaRestTemplateVerbs = map[string]string{
 	"put": "PUT", "delete": "DELETE", "patchForObject": "PATCH",
 }
 
-// javaHTTPClient emits a consumer for a RestTemplate call with a string-literal URL.
+// javaHTTPClient emits a consumer for a RestTemplate call. The URL is the first
+// argument: a plain string literal, OR the service-discovery idiom
+// station_service_url + "/api/v1/stationservice/stations/" + id, which is
+// reconstructed to a templated path (the literal-only path skipped every one of
+// these, so train-ticket's REST mesh was invisible).
 func (p *fileCtx) javaHTTPClient(call *sitter.Node) {
 	_, verb := javaCallTarget(p, call)
 	args := call.ChildByFieldName("arguments")
-	url, ok := p.javaFirstArgString(args)
-	if !ok {
+	if args == nil || args.NamedChildCount() == 0 {
 		return
 	}
+	urlNode := args.NamedChild(0)
+	method := ""
 	if verb == "exchange" {
-		method := javaHTTPMethodArg(p, args)
+		method = javaHTTPMethodArg(p, args)
 		if method == "" {
 			return // couldn't read HttpMethod.X — don't guess
 		}
-		p.emitHTTPClient(method, url)
+	} else if m, ok := javaRestTemplateVerbs[verb]; ok {
+		method = m
+	} else {
 		return
 	}
-	if m, ok := javaRestTemplateVerbs[verb]; ok {
-		p.emitHTTPClient(m, url)
-	}
+	s, ok := p.javaStringLit(urlNode)
+	p.emitHTTPClientFromNode(method, urlNode, s, ok)
 }
 
 // javaHTTPMethodArg scans an argument_list for an HttpMethod.X field_access and
