@@ -359,7 +359,7 @@ func (p *fileCtx) stringArgs(argList *sitter.Node) []string {
 // survive the skip.
 func skipFile(name string) bool {
 	for _, suf := range []string{
-		".pb.go", ".gen.go", "_generated.go", // Go
+		".pb.go", ".pb.gw.go", ".pb.validate.go", ".connect.go", ".gen.go", "_generated.go", // Go (protoc, grpc-gateway, protoc-gen-validate, connect-go)
 		"_pb2.py", "_pb2_grpc.py", // Python protobuf
 		".pb.ts", "_pb.ts", ".pb.js", "_pb.js", // TS/JS protobuf
 	} {
