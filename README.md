@@ -26,14 +26,22 @@ A system grows past the point any one person — or any one AI context window �
 
 ## How it works
 
-1. **Parse** — `go-tree-sitter`, config-driven per language → structural entities + edges (file / class / function; contains / imports / calls / inherits). Deterministic; no LLM, so it can neither fabricate nor loop.
+1. **Parse** — `go-tree-sitter`, config-driven per language → structural entities (file / class / function / method / interface) and `contains` edges, with imports recorded per file. Deterministic; no LLM, so it can neither fabricate nor loop. (Deep cross-file call/inherit resolution is roadmap — the contract layer, where the cross-service value lives, doesn't need it.)
 2. **Contracts** — per-protocol extractors emit a *producer* side and a *consumer* side, each carrying a **normalized canonical key** (`GET /users/{}`, `pkg.Service/Method`, a topic name): HTTP, OpenAPI, gRPC, Kafka/NATS/MQTT, GraphQL, shared-schema, shared-DB, config/env, package.
 3. **Resolve** — group producers + consumers by key and pair them across repos → **cross-service edges**, confidence-graded. Cross-service linking is a deterministic key-join, not fuzzy discovery — so the normalizer *is* the oracle.
 4. **Emit** — a clean graph (`worlds / nodes / edges / cross_edges`) + a basic gravity/modularity report. Standalone-useful; also the import format for richer stores (see below).
 
 ## Status
 
-Early, and built in the open. The deterministic key-normalizers come first (the floor everything stands on), then the parsers and contract extractors, language by language, protocol by protocol — developed against a corpus of public polyglot microservices systems. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+**V1 is built and works end-to-end.** Languages: **Go, Python, TypeScript/JavaScript**. Protocols: **HTTP** (net/http · gin · chi · FastAPI · Flask · Express + requests/httpx/fetch/axios clients), **gRPC** (`.proto` + generated server/client), **pub/sub** (Kafka · NATS). Plus the **gravity / black-hole** diagnostic (Louvain modularity over the world-graph). Every layer is oracle-gated (recall / precision / inverse-hypothesis tests).
+
+```
+lodestar [-world name] [-gravity] <repo> [more-repos...]   # → graph JSON on stdout
+```
+
+Proven on `open-telemetry/opentelemetry-demo`: a real polyglot run yields correct **cross-language** cross-service edges (`recommendation`[Py] → `product-catalog`[Go], `frontend`[TS] → three Go/Py services, …) with zero false positives.
+
+Roadmap: OpenAPI · GraphQL · MQTT/AMQP · shared-DB/schema · config/env · package resolvers; more languages (Java, C#, C++); deep cross-file call resolution. Developed in the open against a corpus of public polyglot systems — see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/corpus.md`](docs/corpus.md).
 
 ## Companion
 

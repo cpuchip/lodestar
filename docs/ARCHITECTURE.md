@@ -47,7 +47,11 @@ lodestar is the *extractor*; the emitted `graph.Graph` JSON imports into [pg-ai-
 
 We can't develop on the private target (a ~269-repo distributed monolith), so we develop in the open against a **corpus of public polyglot multi-protocol systems** (see [`corpus.md`](corpus.md)) — and the target's owner refines on the private repos and contributes the generic improvements (a framework's route syntax, a normalization edge case, a black-hole-tuning) back as PRs. The hardest target sharpens the public tool; nothing private leaks.
 
+## Consuming: the pg-ai-stewards import path
+
+The emitted `graph.Graph` JSON imports into pg-ai-stewards via **`stewards.import_lodestar_graph(project, graph_json)`** (extension chain file `83-code-graph.sql`): it imports each world's structure and lands lodestar's already-computed `cross_edges` directly into `cross_world_edges`. lodestar is the single deterministic extraction authority; the substrate stores + serves (persistence, hybrid search, render). Node kinds and the `contract_key` normalizers are kept consistent across the boundary (`NormalizeHTTPKey` ≙ `stewards.normalize_http_key`).
+
 ## Phasing
 
-- **V1** — Go + TS/JS + Python; **http + grpc + pubsub (Kafka, NATS)**. Target: fully graph `open-telemetry/opentelemetry-demo` (exercises three resolvers across language boundaries) and prove the gravity/black-hole diagnostic against `FudanSELab/train-ticket` (the 41-service public ball-of-mud), calibrated by `spring-petclinic-microservices` (the clean negative control).
-- **then** — the remaining resolvers, one per protocol-deep fixture; more languages (Java, C#, C++); deep cross-file call resolution.
+- **V1 — SHIPPED.** Go + TS/JS + Python; **http + grpc + pubsub (Kafka, NATS)**; the gravity/black-hole diagnostic (Louvain modularity, synthetic-graph oracle); every layer oracle-gated. Proven on `open-telemetry/opentelemetry-demo` — real cross-language cross-service edges (Py↔Go, TS↔Go, TS↔Py), zero false positives. Imports into pg-ai-stewards (above).
+- **then** — the remaining resolvers (OpenAPI, GraphQL, MQTT/AMQP, shared-schema/DB, config/env, package), one per protocol-deep fixture; the real-repo black-hole proof against `FudanSELab/train-ticket` (needs the Java parser) calibrated by `spring-petclinic-microservices`; more languages (Java, C#, C++); deep cross-file call resolution.
