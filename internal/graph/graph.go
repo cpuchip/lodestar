@@ -37,12 +37,26 @@ type CrossEdge struct {
 	Confidence  float64 `json:"confidence"`   // 1.0 extracted / 0.55–0.95 inferred
 }
 
-// Graph is the whole emitted artifact.
+// WorldMeta is per-world git provenance: where the repo came from and what ref
+// was extracted. Both fields are best-effort — a non-git directory (or a repo
+// without an origin remote) yields empty strings, and the caller omits the world
+// from world_meta entirely. Feeds pg-ai-stewards' import_lodestar_graph
+// (p_repo_origins[w] = RepoOrigin, p_ref = a chosen Ref) so the substrate can
+// stamp origin+ref onto the world/entities (branch-aware world-graph, #298).
+type WorldMeta struct {
+	RepoOrigin string `json:"repo_origin,omitempty"` // git remote origin URL
+	Ref        string `json:"ref,omitempty"`         // branch name, or short SHA if detached
+}
+
+// Graph is the whole emitted artifact. WorldMeta is additive (an unknown top-level
+// key existing consumers ignore); it is omitted entirely when no world had git
+// provenance to capture.
 type Graph struct {
-	Worlds     []string    `json:"worlds"`
-	Nodes      []Node      `json:"nodes"`
-	Edges      []Edge      `json:"edges"`
-	CrossEdges []CrossEdge `json:"cross_edges"`
+	Worlds     []string             `json:"worlds"`
+	Nodes      []Node               `json:"nodes"`
+	Edges      []Edge               `json:"edges"`
+	CrossEdges []CrossEdge          `json:"cross_edges"`
+	WorldMeta  map[string]WorldMeta `json:"world_meta,omitempty"`
 }
 
 // Entity kinds.

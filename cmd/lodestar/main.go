@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cpuchip/lodestar/internal/gitmeta"
 	"github.com/cpuchip/lodestar/internal/graph"
 	"github.com/cpuchip/lodestar/internal/gravity"
 	"github.com/cpuchip/lodestar/internal/parse"
@@ -53,6 +54,14 @@ func main() {
 			os.Exit(1)
 		}
 		merge(combined, g)
+		// Capture git provenance once per world (branch-aware world-graph, #298).
+		// Best-effort: a non-git dir yields empty origin+ref, which we omit.
+		if origin, ref := gitmeta.Provenance(repo); origin != "" || ref != "" {
+			if combined.WorldMeta == nil {
+				combined.WorldMeta = map[string]graph.WorldMeta{}
+			}
+			combined.WorldMeta[name] = graph.WorldMeta{RepoOrigin: origin, Ref: ref}
+		}
 	}
 
 	// Pair producers and consumers across worlds into cross-service edges.
