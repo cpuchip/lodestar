@@ -101,13 +101,20 @@ func ParseDir(world, dir string) (*graph.Graph, error) {
 		if skipFile(d.Name()) {
 			return nil
 		}
-		lang := langForPath(langs, path)
-		if lang == nil {
-			return nil
-		}
 		rel, relErr := filepath.Rel(dir, path)
 		if relErr != nil {
 			rel = path
+		}
+		// OpenAPI/Swagger specs are structured data, not code — handle them on a
+		// parallel path (checked before langForPath, since no Language owns .yaml/
+		// .json). A spec's endpoints key via the same NormalizeHTTPKey as code
+		// routes, so they pair with code clients at resolve time for free.
+		if isOpenAPISpec(path, d.Name()) {
+			return parseOpenAPI(g, world, filepath.ToSlash(rel), path)
+		}
+		lang := langForPath(langs, path)
+		if lang == nil {
+			return nil
 		}
 		return parseFile(g, &pending, world, filepath.ToSlash(rel), path, lang)
 	})
