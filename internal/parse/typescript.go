@@ -25,7 +25,7 @@ func tsLanguage() Language {
 		Exts:      []string{".ts", ".tsx"},
 		grammar:   tsgram.GetLanguage(),
 		extract:   extractTS,
-		contracts: []func(*fileCtx, *sitter.Node){extractTSHTTP, extractTSGRPC, extractTSPubSub},
+		contracts: []func(*fileCtx, *sitter.Node){extractTSHTTP, extractTSGRPC, extractTSPubSub, extractTSConfig, extractSQLTables},
 	}
 }
 
@@ -35,7 +35,7 @@ func jsLanguage() Language {
 		Exts:      []string{".js", ".mjs", ".cjs", ".jsx"},
 		grammar:   javascript.GetLanguage(),
 		extract:   extractTS,
-		contracts: []func(*fileCtx, *sitter.Node){extractTSHTTP, extractTSGRPC, extractTSPubSub},
+		contracts: []func(*fileCtx, *sitter.Node){extractTSHTTP, extractTSGRPC, extractTSPubSub, extractTSConfig, extractSQLTables},
 	}
 }
 

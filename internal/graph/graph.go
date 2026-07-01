@@ -61,7 +61,8 @@ const (
 	KindTopicProducer = "topic_producer" // pub
 	KindTopicConsumer = "topic_consumer" // sub
 	KindSchema        = "schema"
-	KindConfigKey     = "config_key"
+	KindConfigKey     = "config_key"  // an env var a service reads (symmetric coupling)
+	KindDataEntity    = "data_entity" // a DB table a service touches (symmetric coupling)
 	KindPackage       = "package"
 )
 

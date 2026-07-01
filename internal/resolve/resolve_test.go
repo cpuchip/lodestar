@@ -88,6 +88,155 @@ func TestResolveGRPC(t *testing.T) {
 	}
 }
 
+// --- symmetric couplings: config/env + shared-DB ---
+
+func cfg(world, name, suffix string) graph.Node {
+	return graph.Node{ID: world + "::cfg::" + name + suffix, World: world, Kind: graph.KindConfigKey, Name: name}
+}
+func tbl(world, name string) graph.Node {
+	return graph.Node{ID: world + "::tbl::" + name, World: world, Kind: graph.KindDataEntity, Name: name}
+}
+
+// edgesOn returns the cross-edges whose ContractKey equals key.
+func edgesOn(g *graph.Graph, key string) []graph.CrossEdge {
+	var out []graph.CrossEdge
+	for _, e := range g.CrossEdges {
+		if e.ContractKey == key {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// The config oracle: two worlds reading DATABASE_URL bind once (undirected); PORT
+// shared by three worlds is noise (0 edges); a var in one world binds nothing; a var
+// spanning 8 worlds is generic infra and is skipped by the maxWorlds cap.
+func TestResolveConfigSymmetric(t *testing.T) {
+	g := &graph.Graph{
+		Worlds: []string{"api", "worker"},
+		Nodes: []graph.Node{
+			cfg("api", "DATABASE_URL", "-a"),    // ┐ two worlds read the same URL
+			cfg("worker", "DATABASE_URL", "-b"), // ┘ → exactly 1 undirected edge
+			cfg("api", "PORT", ""),              // ┐ PORT across three worlds ...
+			cfg("worker", "PORT", ""),           // │
+			cfg("web", "PORT", ""),              // ┘ ... is infra noise → 0 edges
+			cfg("api", "ONLY_HERE", ""),         // single-world var → 0 edges
+		},
+	}
+	// a var in 8 worlds → over the maxWorlds cap → 0 edges
+	for _, w := range []string{"w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8"} {
+		g.Nodes = append(g.Nodes, cfg(w, "SHARED_SECRET", ""))
+	}
+	Resolve(g)
+
+	db := edgesOn(g, "DATABASE_URL")
+	if len(db) != 1 {
+		t.Fatalf("DATABASE_URL: want 1 edge, got %d: %+v", len(db), db)
+	}
+	e := db[0]
+	if e.Protocol != "config" || e.Rel != "reads_config" || e.Confidence != 0.7 {
+		t.Errorf("edge = %+v, want config/reads_config/0.7", e)
+	}
+	// undirected, emitted once: src world < dst world (api < worker)
+	if e.Src != "api::cfg::DATABASE_URL-a" || e.Dst != "worker::cfg::DATABASE_URL-b" {
+		t.Errorf("direction/dedup wrong: %s -> %s", e.Src, e.Dst)
+	}
+	if n := len(edgesOn(g, "PORT")); n != 0 {
+		t.Errorf("PORT is noise, want 0 edges, got %d", n)
+	}
+	if n := len(edgesOn(g, "ONLY_HERE")); n != 0 {
+		t.Errorf("single-world var, want 0 edges, got %d", n)
+	}
+	if n := len(edgesOn(g, "SHARED_SECRET")); n != 0 {
+		t.Errorf("8-world var exceeds maxWorlds cap, want 0 edges, got %d", n)
+	}
+}
+
+// The shared-DB oracle: two worlds touching orders bind once at db/shares_table/0.75;
+// information_schema is metadata noise (0 edges).
+func TestResolveSharedDB(t *testing.T) {
+	g := &graph.Graph{
+		Worlds: []string{"checkout", "shipping"},
+		Nodes: []graph.Node{
+			tbl("checkout", "orders"),
+			tbl("shipping", "orders"), // → 1 edge on orders
+			tbl("checkout", "information_schema"),
+			tbl("shipping", "information_schema"), // metadata → 0 edges
+			tbl("checkout", "cart"),               // single world → 0 edges
+		},
+	}
+	Resolve(g)
+	oe := edgesOn(g, "orders")
+	if len(oe) != 1 {
+		t.Fatalf("orders: want 1 edge, got %d: %+v", len(oe), oe)
+	}
+	if oe[0].Protocol != "db" || oe[0].Rel != "shares_table" || oe[0].Confidence != 0.75 {
+		t.Errorf("edge = %+v, want db/shares_table/0.75", oe[0])
+	}
+	if n := len(edgesOn(g, "information_schema")); n != 0 {
+		t.Errorf("information_schema is noise, want 0 edges, got %d", n)
+	}
+	if n := len(edgesOn(g, "cart")); n != 0 {
+		t.Errorf("single-world table, want 0 edges, got %d", n)
+	}
+}
+
+// TestSymmetricSingleEmissionAndRepresentative proves an undirected pairing emits
+// each unordered world-pair exactly once (no a→b AND b→a), and that many files in
+// one world collapse to one representative — so three worlds with duplicate readers
+// yield exactly C(3,2)=3 edges, not one-per-file.
+func TestSymmetricSingleEmissionAndRepresentative(t *testing.T) {
+	g := &graph.Graph{
+		Worlds: []string{"a", "b", "c"},
+		Nodes: []graph.Node{
+			cfg("a", "TOKEN", "-1"), cfg("a", "TOKEN", "-2"), cfg("a", "TOKEN", "-3"), // 3 files, one world
+			cfg("b", "TOKEN", "-1"),
+			cfg("c", "TOKEN", "-1"), cfg("c", "TOKEN", "-2"),
+		},
+	}
+	Resolve(g)
+	edges := edgesOn(g, "TOKEN")
+	if len(edges) != 3 { // C(3,2), NOT 3*1*2 pairwise-over-files
+		t.Fatalf("want 3 edges (one per world-pair), got %d: %+v", len(edges), edges)
+	}
+	// each unordered world-pair present exactly once; representative = smallest ID
+	seen := map[string]int{}
+	for _, e := range edges {
+		sw, dw := worldOfID(e.Src), worldOfID(e.Dst)
+		if sw >= dw {
+			t.Errorf("edge not ordered src<dst world: %s -> %s", e.Src, e.Dst)
+		}
+		seen[sw+"|"+dw]++
+	}
+	for _, pair := range []string{"a|b", "a|c", "b|c"} {
+		if seen[pair] != 1 {
+			t.Errorf("world-pair %s emitted %d times, want exactly 1", pair, seen[pair])
+		}
+	}
+	// representative for world a is its smallest node ID (…TOKEN-1)
+	for _, e := range edges {
+		if worldOfID(e.Src) == "a" && e.Src != "a::cfg::TOKEN-1" {
+			t.Errorf("world a representative = %q, want smallest ID a::cfg::TOKEN-1", e.Src)
+		}
+	}
+}
+
+// worldOfID recovers the world from a test node ID of the form "world::...".
+func worldOfID(id string) string {
+	if i := indexOf(id, ':'); i >= 0 {
+		return id[:i]
+	}
+	return id
+}
+func indexOf(s string, b byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == b {
+			return i
+		}
+	}
+	return -1
+}
+
 // TestResolveNoCrossWhenSingleWorld proves the join needs two worlds: a full
 // producer+consumer set inside one world yields nothing.
 func TestResolveNoCrossWhenSingleWorld(t *testing.T) {

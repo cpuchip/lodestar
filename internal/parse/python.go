@@ -26,7 +26,7 @@ func pythonLanguage() Language {
 		Exts:      []string{".py"},
 		grammar:   python.GetLanguage(),
 		extract:   extractPython,
-		contracts: []func(*fileCtx, *sitter.Node){extractPythonHTTP, extractPythonGRPC, extractPythonPubSub},
+		contracts: []func(*fileCtx, *sitter.Node){extractPythonHTTP, extractPythonGRPC, extractPythonPubSub, extractPythonConfig, extractSQLTables},
 	}
 }
 
