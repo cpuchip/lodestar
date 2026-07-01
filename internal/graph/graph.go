@@ -55,7 +55,8 @@ const (
 	KindInterface     = "interface"
 	KindHTTPEndpoint  = "http_endpoint"  // producer (a route)
 	KindHTTPClient    = "http_client"    // consumer (a call)
-	KindGRPCService   = "grpc_service"
+	KindGRPCService   = "grpc_service" // producer (a .proto service / RegisterXServer)
+	KindGRPCClient    = "grpc_client"  // consumer (NewXClient)
 	KindGRPCMethod    = "grpc_method"
 	KindTopicProducer = "topic_producer" // pub
 	KindTopicConsumer = "topic_consumer" // sub

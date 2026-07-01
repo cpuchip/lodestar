@@ -57,6 +57,37 @@ func TestResolveHTTP(t *testing.T) {
 	}
 }
 
+func svc(world, name string) graph.Node {
+	return graph.Node{ID: world + "::svc::" + name, World: world, Kind: graph.KindGRPCService, Name: name}
+}
+func gcl(world, name string) graph.Node {
+	return graph.Node{ID: world + "::gcl::" + name, World: world, Kind: graph.KindGRPCClient, Name: name}
+}
+
+// TestResolveGRPC proves the gRPC pairing joins on the bare service name across
+// worlds, at 0.9 confidence, caller→callee.
+func TestResolveGRPC(t *testing.T) {
+	g := &graph.Graph{
+		Worlds: []string{"catalog", "checkout"},
+		Nodes: []graph.Node{
+			svc("catalog", "ProductCatalogService"),  // producer
+			gcl("checkout", "ProductCatalogService"), // consumer → 1 edge
+			svc("catalog", "ShippingService"),        // producer, no consumer → 0
+		},
+	}
+	Resolve(g)
+	if len(g.CrossEdges) != 1 {
+		t.Fatalf("want 1 gRPC cross-edge, got %d: %+v", len(g.CrossEdges), g.CrossEdges)
+	}
+	e := g.CrossEdges[0]
+	if e.Protocol != "grpc" || e.Rel != "grpc_call" || e.Confidence != 0.9 {
+		t.Errorf("edge = %+v, want grpc/grpc_call/0.9", e)
+	}
+	if e.Src != "checkout::gcl::ProductCatalogService" || e.Dst != "catalog::svc::ProductCatalogService" {
+		t.Errorf("direction wrong: %s -> %s (want checkout consumer -> catalog producer)", e.Src, e.Dst)
+	}
+}
+
 // TestResolveNoCrossWhenSingleWorld proves the join needs two worlds: a full
 // producer+consumer set inside one world yields nothing.
 func TestResolveNoCrossWhenSingleWorld(t *testing.T) {

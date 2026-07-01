@@ -45,9 +45,9 @@ type fileCtx struct {
 	seen   map[string]bool // node IDs already emitted for this file (dedup)
 }
 
-// Languages returns the configured language set (V1: Go).
+// Languages returns the configured language set.
 func Languages() []Language {
-	return []Language{goLanguage()}
+	return []Language{goLanguage(), protoLanguage()}
 }
 
 // langForPath returns the Language that owns a file, or nil.
@@ -174,6 +174,17 @@ func (p *fileCtx) stringLit(n *sitter.Node) (string, bool) {
 		return strings.Trim(n.Content(p.src), "\"`"), true
 	}
 	return "", false
+}
+
+// firstArgString returns the value of the FIRST positional argument iff it is a
+// string literal. This distinguishes APIs where the topic/subject is positionally
+// first (NATS nc.Publish("subj", ...)) from ones where a context leads
+// (redis rdb.Publish(ctx, "channel", ...)) — the latter's first arg isn't a string.
+func (p *fileCtx) firstArgString(argList *sitter.Node) (string, bool) {
+	if argList == nil || argList.NamedChildCount() == 0 {
+		return "", false
+	}
+	return p.stringLit(argList.NamedChild(0))
 }
 
 // stringArgs returns, in order, the string-literal arguments of an argument_list

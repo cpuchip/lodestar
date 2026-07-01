@@ -37,6 +37,24 @@ var pairings = []pairing{
 		confidence:    0.85,
 		isNoise:       isHTTPNoise,
 	},
+	{
+		producerKind:  graph.KindGRPCService,
+		consumerKind:  graph.KindGRPCClient,
+		rel:           "grpc_call",
+		protocol:      "grpc",
+		srcIsProducer: false,
+		confidence:    0.9, // service names are specific → a match is strong
+		isNoise:       nil,
+	},
+	{
+		producerKind:  graph.KindTopicProducer,
+		consumerKind:  graph.KindTopicConsumer,
+		rel:           "publishes_to",
+		protocol:      "pubsub",
+		srcIsProducer: true, // data flows publisher → subscriber
+		confidence:    0.8,  // topic names can be generic → slightly lower
+		isNoise:       nil,
+	},
 }
 
 // Resolve appends cross-world edges to g for every producer/consumer pair that

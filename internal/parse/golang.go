@@ -24,7 +24,7 @@ func goLanguage() Language {
 		Exts:      []string{".go"},
 		grammar:   golang.GetLanguage(),
 		extract:   extractGo,
-		contracts: []func(*fileCtx, *sitter.Node){extractGoHTTP},
+		contracts: []func(*fileCtx, *sitter.Node){extractGoHTTP, extractGoGRPC, extractGoPubSub},
 	}
 }
 
