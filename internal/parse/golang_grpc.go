@@ -40,7 +40,7 @@ func extractGoGRPC(p *fileCtx, root *sitter.Node) {
 var grpcNonServices = map[string]bool{
 	"": true, "HTTP": true, "Http": true, "Redis": true, "S3": true, "SQL": true,
 	"DB": true, "Grpc": true, "GRPC": true, "Mongo": true, "Kafka": true, "AWS": true,
-	"GCP": true, "OAuth2": true,
+	"GCP": true, "OAuth2": true, "Default": true,
 }
 
 // grpcServiceFromClientCtor extracts the service name from NewXxxClient.

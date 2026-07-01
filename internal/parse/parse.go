@@ -80,6 +80,9 @@ func ParseDir(world, dir string) (*graph.Graph, error) {
 			}
 			return nil
 		}
+		if skipFile(d.Name()) {
+			return nil
+		}
 		lang := langForPath(langs, path)
 		if lang == nil {
 			return nil
@@ -200,6 +203,23 @@ func (p *fileCtx) stringArgs(argList *sitter.Node) []string {
 		}
 	}
 	return out
+}
+
+// skipFile filters out machine-generated sources: they bloat the structural graph
+// with thousands of nodes nobody navigates, and the REAL producer/consumer calls
+// (RegisterXServer / NewXClient) live in hand-written code, so cross-service edges
+// survive the skip.
+func skipFile(name string) bool {
+	for _, suf := range []string{
+		".pb.go", ".gen.go", "_generated.go", // Go
+		"_pb2.py", "_pb2_grpc.py", // Python protobuf
+		".pb.ts", "_pb.ts", ".pb.js", "_pb.js", // TS/JS protobuf
+	} {
+		if strings.HasSuffix(name, suf) {
+			return true
+		}
+	}
+	return false
 }
 
 // skipDir filters out vendored / VCS / dependency directories that would bloat
