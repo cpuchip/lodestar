@@ -8,15 +8,20 @@ import (
 )
 
 // protoLanguage configures .proto extraction. A .proto that declares a gRPC
-// service is the contract's authority — the service that ships it is the producer.
+// service is recorded as a SCHEMA node (kind=schema) — NOT a producer.
+//
+// Why not a producer: in the wild the same shared .proto (defining every service)
+// is often copied into every service's repo for codegen (e.g. Online Boutique),
+// so "this world has a .proto declaring AdService" is NOT evidence this world
+// *serves* AdService — it would make every world a false producer of every
+// service (an N×M cartesian blowup at resolve time). The authoritative producer
+// signal is the server REGISTRATION in hand-written code (Register<Svc>Server /
+// add_<Svc>Servicer_to_server), which the per-language gRPC extractors catch.
+// The proto still records the contract (service name + methods) for navigation
+// and future method-level matching; it just doesn't pair.
+//
 // Grammar (probed): source_file → package(full_ident) · service(service_name, rpc*)
 // · rpc(rpc_name, message_or_enum_type...).
-//
-// The producer key is the SERVICE NAME alone (package-agnostic): a Go consumer
-// constructs its client with NewProductCatalogServiceClient(...), which carries
-// the service name but NOT the proto package, so the service name is the only
-// token both sides share. Methods + package are kept as metadata for later
-// method-level refinement.
 func protoLanguage() Language {
 	return Language{
 		Name:    "protobuf",
@@ -56,7 +61,8 @@ func extractProto(p *fileCtx, root *sitter.Node) {
 		if len(methods) > 0 {
 			meta["methods"] = joinSpace(methods)
 		}
-		p.addContract(graph.KindGRPCService, name, meta)
+		// Schema, not producer: a copied .proto ≠ evidence this world serves it.
+		p.addContract(graph.KindSchema, name, meta)
 	}
 }
 

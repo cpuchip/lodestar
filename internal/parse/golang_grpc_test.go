@@ -59,37 +59,47 @@ func TestExtractGoGRPC(t *testing.T) {
 
 	producers := map[string]bool{}
 	consumers := map[string]bool{}
+	schemas := map[string]bool{}
 	var catalog graph.Node
 	for _, n := range g.Nodes {
 		switch n.Kind {
 		case graph.KindGRPCService:
 			producers[n.Name] = true
+		case graph.KindGRPCClient:
+			consumers[n.Name] = true
+		case graph.KindSchema:
+			schemas[n.Name] = true
 			if n.Name == "ProductCatalogService" && n.Metadata["methods"] != "" {
 				catalog = n
 			}
-		case graph.KindGRPCClient:
-			consumers[n.Name] = true
 		}
 	}
 
-	// recall — proto services + the server registration are producers
-	for _, w := range []string{"ProductCatalogService", "ShippingService"} {
-		if !producers[w] {
-			t.Errorf("recall: missing gRPC producer %q (got %v)", w, keys(producers))
-		}
+	// The producer is the SERVER REGISTRATION only — RegisterProductCatalogServiceServer.
+	// A .proto that merely DECLARES a service (ShippingService here) is NOT a producer:
+	// copied protos would make every world a false producer (the Online Boutique blowup).
+	if !producers["ProductCatalogService"] {
+		t.Errorf("recall: RegisterProductCatalogServiceServer should be a producer (got %v)", keys(producers))
 	}
-	// recall — the client ctor is a consumer
+	if producers["ShippingService"] {
+		t.Errorf("precision: a bare .proto service must NOT be a producer (ShippingService leaked)")
+	}
+	// the client ctor is a consumer
 	if !consumers["ShippingService"] {
-		t.Errorf("recall: missing gRPC consumer ShippingService (got %v)", keys(consumers))
+		t.Errorf("recall: NewShippingServiceClient should be a consumer (got %v)", keys(consumers))
 	}
-
+	// the proto records both services as SCHEMA (navigation + future method-level), not producers
+	for _, s := range []string{"ProductCatalogService", "ShippingService"} {
+		if !schemas[s] {
+			t.Errorf("recall: proto service %q should be a schema node (got %v)", s, keys(schemas))
+		}
+	}
 	// precision — generic/non-gRPC client ctors are NOT services
 	if consumers["Redis"] || consumers[""] || consumers["Client"] {
 		t.Errorf("precision: non-gRPC client ctor leaked: %v", keys(consumers))
 	}
-
-	// proto metadata survived (methods + package), for later method-level use
+	// proto metadata survived on the schema node (methods + package)
 	if catalog.Metadata["package"] != "oteldemo" || catalog.Metadata["methods"] != "GetProduct ListProducts" {
-		t.Errorf("proto metadata = %v, want package=oteldemo methods='GetProduct ListProducts'", catalog.Metadata)
+		t.Errorf("proto schema metadata = %v, want package=oteldemo methods='GetProduct ListProducts'", catalog.Metadata)
 	}
 }
