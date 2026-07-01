@@ -52,6 +52,15 @@ var grpcNonServices = map[string]bool{
 var mockPrefixes = []string{"Mock", "Fake", "Stub", "Spy", "Mocked"}
 
 // isMockName reports whether a service name is a test double by its leading token.
+//
+// ★ KNOWN LIMITATION (watch — Michael + Claude, 2026-07-01): this is a plain
+// HasPrefix, so a REAL service whose name happens to start with one of these tokens
+// (Mockingbird, Stubbs, Spyglass, Faked…) is false-dropped. Accepted for now — the
+// tradeoff removes ~60% mock noise and such names are rare — but if the real corpus
+// ever shows a legit service vanishing, tighten this to a camelCase-boundary check:
+// the prefix must be followed by an uppercase letter or end of string (so "MockFoo"
+// = a mock of Foo, but "Mockingbird" = "Mock"+"ingbird" is a real name). See also
+// docs/known-limitations.md.
 func isMockName(svc string) bool {
 	for _, p := range mockPrefixes {
 		if strings.HasPrefix(svc, p) {
