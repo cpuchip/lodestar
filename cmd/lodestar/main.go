@@ -20,6 +20,7 @@ import (
 
 	"github.com/cpuchip/lodestar/internal/graph"
 	"github.com/cpuchip/lodestar/internal/parse"
+	"github.com/cpuchip/lodestar/internal/resolve"
 )
 
 const tagline = "lodestar — navigate any codebase by its gravity"
@@ -51,6 +52,9 @@ func main() {
 		}
 		merge(combined, g)
 	}
+
+	// Pair producers and consumers across worlds into cross-service edges.
+	resolve.Resolve(combined)
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")

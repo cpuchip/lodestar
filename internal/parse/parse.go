@@ -30,15 +30,19 @@ type Language struct {
 	Exts    []string
 	grammar *sitter.Language
 	extract func(p *fileCtx, root *sitter.Node)
+	// contracts are the per-protocol extractors (HTTP/gRPC/pub-sub) run after the
+	// structural pass. Each walks the same tree for its producer/consumer patterns.
+	contracts []func(p *fileCtx, root *sitter.Node)
 }
 
 // fileCtx carries everything an extractor needs for one file.
 type fileCtx struct {
-	world   string // the service / repo
-	rel     string // repo-relative path (forward slashes)
-	src     []byte
-	fileID  string
-	g       *graph.Graph
+	world  string // the service / repo
+	rel    string // repo-relative path (forward slashes)
+	src    []byte
+	fileID string
+	g      *graph.Graph
+	seen   map[string]bool // node IDs already emitted for this file (dedup)
 }
 
 // Languages returns the configured language set (V1: Go).
@@ -113,15 +117,37 @@ func parseFile(g *graph.Graph, world, rel, absPath string, lang *Language) error
 		Kind:  graph.KindFile,
 		Name:  rel,
 	})
-	p := &fileCtx{world: world, rel: rel, src: src, fileID: fileID, g: g}
-	lang.extract(p, tree.RootNode())
+	p := &fileCtx{world: world, rel: rel, src: src, fileID: fileID, g: g, seen: map[string]bool{fileID: true}}
+	root := tree.RootNode()
+	lang.extract(p, root)
+	for _, extractContracts := range lang.contracts {
+		extractContracts(p, root)
+	}
 	return nil
 }
 
 // addDecl appends a declaration node (function/method/type/...) plus the
 // file-contains-decl edge, and returns the new node's ID.
 func (p *fileCtx) addDecl(kind, name string, meta map[string]string) string {
-	id := p.fileID + "::" + name
+	return p.addNode(p.fileID+"::"+name, kind, name, meta)
+}
+
+// addContract appends a producer/consumer contract node (http_endpoint,
+// http_client, grpc_method, topic_producer, ...) keyed by its normalized contract
+// key, plus the file-contains edge. Name IS the key so the pairing at resolve time
+// (and the substrate's (world,kind,name) matcher) agree on identity; two routes
+// that normalize to the same key in one file collapse to one node.
+func (p *fileCtx) addContract(kind, key string, meta map[string]string) {
+	p.addNode(p.fileID+"::"+kind+"::"+key, kind, key, meta)
+}
+
+// addNode is the shared emit: dedups by ID within the file, appends the node and
+// its file-contains edge.
+func (p *fileCtx) addNode(id, kind, name string, meta map[string]string) string {
+	if p.seen[id] {
+		return id
+	}
+	p.seen[id] = true
 	p.g.Nodes = append(p.g.Nodes, graph.Node{
 		ID:       id,
 		World:    p.world,
@@ -131,6 +157,38 @@ func (p *fileCtx) addDecl(kind, name string, meta map[string]string) string {
 	})
 	p.g.Edges = append(p.g.Edges, graph.Edge{Src: p.fileID, Dst: id, Rel: graph.RelContains})
 	return id
+}
+
+// walk visits n and every descendant in pre-order.
+func walk(n *sitter.Node, fn func(*sitter.Node)) {
+	fn(n)
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		walk(n.NamedChild(i), fn)
+	}
+}
+
+// stringLit returns the unquoted value of a Go string-literal node, or ("",false).
+func (p *fileCtx) stringLit(n *sitter.Node) (string, bool) {
+	switch n.Type() {
+	case "interpreted_string_literal", "raw_string_literal":
+		return strings.Trim(n.Content(p.src), "\"`"), true
+	}
+	return "", false
+}
+
+// stringArgs returns, in order, the string-literal arguments of an argument_list
+// (non-literal args like handlers, contexts, and bodies are skipped).
+func (p *fileCtx) stringArgs(argList *sitter.Node) []string {
+	var out []string
+	if argList == nil {
+		return out
+	}
+	for i := 0; i < int(argList.NamedChildCount()); i++ {
+		if s, ok := p.stringLit(argList.NamedChild(i)); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // skipDir filters out vendored / VCS / dependency directories that would bloat

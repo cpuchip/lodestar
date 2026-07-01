@@ -20,10 +20,11 @@ import (
 // detail, not part of the service's public skeleton.
 func goLanguage() Language {
 	return Language{
-		Name:    "go",
-		Exts:    []string{".go"},
-		grammar: golang.GetLanguage(),
-		extract: extractGo,
+		Name:      "go",
+		Exts:      []string{".go"},
+		grammar:   golang.GetLanguage(),
+		extract:   extractGo,
+		contracts: []func(*fileCtx, *sitter.Node){extractGoHTTP},
 	}
 }
 
