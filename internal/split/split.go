@@ -37,7 +37,11 @@ type Options struct {
 // with common non-service binary names held back.
 func DefaultOptions() Options {
 	return Options{
-		RootGlobs: []string{"cmd/*"},
+		// cmd/* is where the code lives; charts/* is where the deployable is declared.
+		// Including both means a service's binary AND its chart land in the same
+		// per-service world (so the Helm service-producer node is attributed to the
+		// service, not the repo). The charts/* gate then keeps cmd/tester etc. out.
+		RootGlobs: []string{"cmd/*", "charts/*"},
 		GateGlobs: []string{"charts/*"},
 		Generic: map[string]bool{
 			"server": true, "main": true, "app": true, "cmd": true, "cli": true,

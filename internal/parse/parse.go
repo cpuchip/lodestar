@@ -112,6 +112,15 @@ func ParseDir(world, dir string) (*graph.Graph, error) {
 		if isOpenAPISpec(path, d.Name()) {
 			return parseOpenAPI(g, world, filepath.ToSlash(rel), path)
 		}
+		// Helm charts (structured YAML): the chart's service producer + the values'
+		// upstream service references. Checked by exact filename before langForPath,
+		// since no Language owns .yaml.
+		if isHelmChartFile(d.Name()) {
+			return parseHelmChart(g, world, filepath.ToSlash(rel), path)
+		}
+		if isHelmValuesFile(d.Name()) {
+			return parseHelmValues(g, world, filepath.ToSlash(rel), path)
+		}
 		lang := langForPath(langs, path)
 		if lang == nil {
 			return nil

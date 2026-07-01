@@ -56,7 +56,35 @@ var pairings = []pairing{
 		confidence:    0.8,  // topic names can be generic → slightly lower
 		isNoise:       nil,
 	},
+	{
+		// Deployment topology from Helm: a chart defines a service (producer); a
+		// values/env service reference names an upstream (consumer). The referencing
+		// service depends on the target, so src=consumer, dst=producer.
+		producerKind:  graph.KindService,
+		consumerKind:  graph.KindServiceRef,
+		rel:           "connects_to",
+		protocol:      "k8s",
+		srcIsProducer: false,
+		confidence:    0.8,
+		isNoise:       isServiceRefNoise,
+	},
 }
+
+// infraServices are shared infrastructure a values ref may name (a DB, broker,
+// cache, telemetry sink) that is NOT an application service in the graph. The
+// key-join already drops any target no chart PRODUCES, so this is belt-and-braces
+// against a repo that happens to vendor an infra chart by a generic name.
+var infraServices = map[string]bool{
+	"redis": true, "postgres": true, "postgresql": true, "mysql": true, "mariadb": true,
+	"mongo": true, "mongodb": true, "cassandra": true, "kafka": true, "nats": true,
+	"rabbitmq": true, "memcached": true, "etcd": true, "vault": true, "consul": true,
+	"zookeeper": true, "elasticsearch": true, "opensearch": true, "prometheus": true,
+	"grafana": true, "jaeger": true, "localhost": true, "db": true, "cache": true,
+	"database": true, "queue": true,
+}
+
+// isServiceRefNoise drops references to shared infrastructure (not app services).
+func isServiceRefNoise(key string) bool { return infraServices[key] }
 
 // symmetricPairing describes a coupling with no producer/consumer direction: a key
 // (an env var, a table name) that appears in ≥2 worlds means those worlds are bound.

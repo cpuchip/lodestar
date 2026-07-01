@@ -78,6 +78,12 @@ const (
 	KindConfigKey     = "config_key"  // an env var a service reads (symmetric coupling)
 	KindDataEntity    = "data_entity" // a DB table a service touches (symmetric coupling)
 	KindPackage       = "package"
+	// Deployment-topology kinds (Helm/k8s): a chart declares the service it IS
+	// (producer, keyed on the service name); a values/env service reference names
+	// an upstream service it talks to (consumer, keyed on the target service name).
+	// Directional: consumer connects_to producer.
+	KindService    = "service"     // producer — a deployable service a chart defines
+	KindServiceRef = "service_ref" // consumer — a values/env reference to another service by name
 )
 
 // Intra-world edge relations.
