@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/cpuchip/lodestar/internal/graph"
+	"github.com/cpuchip/lodestar/internal/gravity"
 	"github.com/cpuchip/lodestar/internal/parse"
 	"github.com/cpuchip/lodestar/internal/resolve"
 )
@@ -27,6 +28,7 @@ const tagline = "lodestar — navigate any codebase by its gravity"
 
 func main() {
 	world := flag.String("world", "", "world (service) name for a single repo; defaults to the directory's base name")
+	gravityReport := flag.Bool("gravity", false, "also print the gravity/black-hole report (JSON) to stderr")
 	flag.Usage = usage
 	flag.Parse()
 	repos := flag.Args()
@@ -61,6 +63,14 @@ func main() {
 	if err := enc.Encode(combined); err != nil {
 		fmt.Fprintf(os.Stderr, "lodestar: encoding graph: %v\n", err)
 		os.Exit(1)
+	}
+
+	if *gravityReport {
+		rep := gravity.Analyze(combined)
+		genc := json.NewEncoder(os.Stderr)
+		genc.SetIndent("", "  ")
+		fmt.Fprintln(os.Stderr, "--- gravity ---")
+		_ = genc.Encode(rep)
 	}
 }
 
