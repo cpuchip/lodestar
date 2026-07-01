@@ -80,6 +80,17 @@ func (p *fileCtx) anyStringLit(n *sitter.Node) (string, bool) {
 	switch n.Type() {
 	case "interpreted_string_literal", "raw_string_literal":
 		return strings.Trim(n.Content(p.src), "\"`"), true
+	case "string_literal":
+		// Java (string_fragment children) or C# (string_literal_content children);
+		// neither language interpolates a plain string_literal, so it is static.
+		var sb strings.Builder
+		for i := 0; i < int(n.NamedChildCount()); i++ {
+			switch c := n.NamedChild(i); c.Type() {
+			case "string_fragment", "string_literal_content":
+				sb.WriteString(c.Content(p.src))
+			}
+		}
+		return sb.String(), true
 	case "string":
 		// Python (string_content) or TS/JS (string_fragment); bail on interpolation.
 		var sb strings.Builder

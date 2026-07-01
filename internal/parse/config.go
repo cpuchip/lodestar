@@ -76,6 +76,56 @@ func extractPythonConfig(p *fileCtx, root *sitter.Node) {
 	})
 }
 
+// extractJavaConfig finds env reads in Java: System.getenv("X").
+func extractJavaConfig(p *fileCtx, root *sitter.Node) {
+	walk(root, func(n *sitter.Node) {
+		if n.Type() != "method_invocation" {
+			return
+		}
+		object, name := javaCallTarget(p, n)
+		if object != "System" || name != "getenv" {
+			return
+		}
+		if v, ok := p.javaFirstArgString(n.ChildByFieldName("arguments")); ok && v != "" {
+			p.addContract(graph.KindConfigKey, v, map[string]string{"env": v})
+		}
+	})
+}
+
+// extractCSharpConfig finds config reads in C#:
+//
+//	Environment.GetEnvironmentVariable("X")  → call, object Environment
+//	Configuration["X"]                        → element access on a Configuration ref
+func extractCSharpConfig(p *fileCtx, root *sitter.Node) {
+	walk(root, func(n *sitter.Node) {
+		switch n.Type() {
+		case "invocation_expression":
+			object, name := csCallTarget(p, n)
+			if object != "Environment" || name != "GetEnvironmentVariable" {
+				return
+			}
+			if v, ok := p.csFirstArgString(n.ChildByFieldName("arguments")); ok && v != "" {
+				p.addContract(graph.KindConfigKey, v, map[string]string{"env": v})
+			}
+		case "element_access_expression":
+			expr := n.ChildByFieldName("expression")
+			if expr == nil {
+				return
+			}
+			// The IConfiguration is conventionally named Configuration or
+			// _configuration (field). Its final segment gates the read.
+			switch csOperandName(p, expr) {
+			case "Configuration", "_configuration":
+			default:
+				return
+			}
+			if v, ok := p.csFirstArgString(n.ChildByFieldName("subscript")); ok && v != "" {
+				p.addContract(graph.KindConfigKey, v, map[string]string{"env": v})
+			}
+		}
+	})
+}
+
 // extractTSConfig finds env reads in TS/JS: process.env.X and process.env["X"].
 // Both hang off the process.env member expression; the var name is the trailing
 // property (member) or the string subscript. The `process.env` member node itself

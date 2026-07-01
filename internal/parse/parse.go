@@ -64,7 +64,7 @@ type pendingRef struct {
 
 // Languages returns the configured language set.
 func Languages() []Language {
-	return []Language{goLanguage(), protoLanguage(), pythonLanguage(), tsLanguage(), jsLanguage()}
+	return []Language{goLanguage(), protoLanguage(), pythonLanguage(), tsLanguage(), jsLanguage(), javaLanguage(), csharpLanguage()}
 }
 
 // langForPath returns the Language that owns a file, or nil.
