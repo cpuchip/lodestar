@@ -43,6 +43,23 @@ type fileCtx struct {
 	fileID string
 	g      *graph.Graph
 	seen   map[string]bool // node IDs already emitted for this file (dedup)
+	// refs is the WORLD-level accumulator for the deep call graph: a call/base
+	// target can be defined in another file of the same world, so references are
+	// collected during Pass 1 (structural extraction, per file) and resolved to
+	// edges in Pass 2 (after every file of the world is parsed). It points at a
+	// single slice shared by every fileCtx of one ParseDir run.
+	refs *[]pendingRef
+}
+
+// pendingRef is a call / inherit / implement reference recorded during structural
+// extraction (Pass 1) and resolved after the whole world is parsed (Pass 2). It
+// deliberately holds only the ENCLOSING decl's already-emitted node ID and the
+// bare target NAME: the target may be defined in another file of the same world,
+// so it cannot be resolved to an ID until every file has been walked.
+type pendingRef struct {
+	srcID  string // enclosing function/method/class node ID (already emitted)
+	target string // bare callee / base name to resolve against the world's symbols
+	rel    string // graph.RelCalls | RelInherits | RelImplements
 }
 
 // Languages returns the configured language set.
@@ -69,6 +86,7 @@ func langForPath(langs []Language, path string) *Language {
 func ParseDir(world, dir string) (*graph.Graph, error) {
 	langs := Languages()
 	g := &graph.Graph{Worlds: []string{world}}
+	var pending []pendingRef // Pass-1 accumulator, resolved in Pass 2 below
 
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -91,16 +109,22 @@ func ParseDir(world, dir string) (*graph.Graph, error) {
 		if relErr != nil {
 			rel = path
 		}
-		return parseFile(g, world, filepath.ToSlash(rel), path, lang)
+		return parseFile(g, &pending, world, filepath.ToSlash(rel), path, lang)
 	})
 	if err != nil {
 		return nil, err
 	}
+	// Pass 2: now that every declaration in the world is known, resolve the deep
+	// call graph (calls / inherits / implements) into edges. This must happen after
+	// the file loop because a call or base class can live in a different file.
+	resolveRefs(g, world, pending)
 	return g, nil
 }
 
-// parseFile parses one source file into g.
-func parseFile(g *graph.Graph, world, rel, absPath string, lang *Language) error {
+// parseFile parses one source file into g. pending is the world-level reference
+// accumulator threaded through so extractors can record calls/inherits/implements
+// for Pass 2 resolution.
+func parseFile(g *graph.Graph, pending *[]pendingRef, world, rel, absPath string, lang *Language) error {
 	src, err := os.ReadFile(absPath)
 	if err != nil {
 		return err
@@ -120,7 +144,7 @@ func parseFile(g *graph.Graph, world, rel, absPath string, lang *Language) error
 		Kind:  graph.KindFile,
 		Name:  rel,
 	})
-	p := &fileCtx{world: world, rel: rel, src: src, fileID: fileID, g: g, seen: map[string]bool{fileID: true}}
+	p := &fileCtx{world: world, rel: rel, src: src, fileID: fileID, g: g, seen: map[string]bool{fileID: true}, refs: pending}
 	root := tree.RootNode()
 	lang.extract(p, root)
 	for _, extractContracts := range lang.contracts {
@@ -160,6 +184,114 @@ func (p *fileCtx) addNode(id, kind, name string, meta map[string]string) string 
 	})
 	p.g.Edges = append(p.g.Edges, graph.Edge{Src: p.fileID, Dst: id, Rel: graph.RelContains})
 	return id
+}
+
+// --- deep call graph: Pass 1 recording, Pass 2 resolution ---
+
+// addRef records a pending reference (no-op for an empty src/target).
+func (p *fileCtx) addRef(srcID, target, rel string) {
+	if srcID == "" || target == "" {
+		return
+	}
+	*p.refs = append(*p.refs, pendingRef{srcID: srcID, target: target, rel: rel})
+}
+
+// recordCalls walks the subtree rooted at body and records a pending calls ref
+// from srcID for every call node (of type callType) whose bare callee nameFn can
+// name. Nested calls — in argument positions, in closures — attribute to the same
+// enclosing decl, since closures are not their own nodes in the skeleton.
+// Resolution to an actual node happens in Pass 2; a stdlib/third-party/dynamic
+// callee simply won't match a world symbol and yields no edge (precision > recall).
+func (p *fileCtx) recordCalls(srcID string, body *sitter.Node, callType string, nameFn func(*sitter.Node) string) {
+	if srcID == "" || body == nil {
+		return
+	}
+	walk(body, func(n *sitter.Node) {
+		if n.Type() != callType {
+			return
+		}
+		if name := nameFn(n); name != "" {
+			p.addRef(srcID, name, graph.RelCalls)
+		}
+	})
+}
+
+// resolveRefs is Pass 2: it turns pending call/inherit/implement references into
+// edges, but ONLY when a reference's bare name resolves to EXACTLY ONE
+// kind-appropriate declaration in the world. This is precision over recall by
+// construction — an unresolved name (stdlib, third-party, dynamic) or an ambiguous
+// one (two defs sharing the name) yields NO edge; a missing call edge is fine, a
+// wrong one is not. Resolution is intra-world only: the symbol table is built from
+// this world's nodes, so a resolved edge can never cross a world boundary (that is
+// the contract layer's job). Deterministic: table and pending are both traversed
+// in slice order, so identical input yields an identical edge sequence.
+func resolveRefs(g *graph.Graph, world string, pending []pendingRef) {
+	if len(pending) == 0 {
+		return
+	}
+	type symbol struct{ id, kind string }
+	// Symbol table: lookup-name -> matching decls. Functions/classes/interfaces key
+	// on their (bare) name; methods key on the bare method name (last dotted
+	// segment) because a call site (`s.setup()`) sees only the method name, not the
+	// receiver type — V1 receiver-less resolution, emitted on a unique match only.
+	table := map[string][]symbol{}
+	for _, n := range g.Nodes {
+		if n.World != world {
+			continue
+		}
+		switch n.Kind {
+		case graph.KindFunction, graph.KindClass, graph.KindInterface:
+			table[n.Name] = append(table[n.Name], symbol{n.ID, n.Kind})
+		case graph.KindMethod:
+			name := n.Name
+			if i := strings.LastIndexByte(name, '.'); i >= 0 {
+				name = name[i+1:]
+			}
+			table[name] = append(table[name], symbol{n.ID, n.Kind})
+		}
+	}
+	seen := map[string]bool{} // dedup edges: repeated calls to the same target collapse
+	for _, ref := range pending {
+		var match symbol
+		count := 0
+		for _, cand := range table[ref.target] {
+			if !relAcceptsKind(ref.rel, cand.kind) {
+				continue // wrong kind for this relation — never a valid target
+			}
+			match = cand
+			count++
+			if count > 1 {
+				break // ambiguous; no need to keep scanning
+			}
+		}
+		if count != 1 { // unresolved or ambiguous — skip (precision over recall)
+			continue
+		}
+		if match.id == ref.srcID { // self-edge (recursion) — no navigational value
+			continue
+		}
+		key := ref.rel + "\x00" + ref.srcID + "\x00" + match.id
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		g.Edges = append(g.Edges, graph.Edge{Src: ref.srcID, Dst: match.id, Rel: ref.rel})
+	}
+}
+
+// relAcceptsKind gates which decl kinds a relation may resolve to, so a calls edge
+// can never point at a class and an inherits edge can never point at a function.
+// A precision guard layered on top of the exactly-one-definition rule.
+func relAcceptsKind(rel, kind string) bool {
+	switch rel {
+	case graph.RelCalls:
+		return kind == graph.KindFunction || kind == graph.KindMethod
+	case graph.RelInherits:
+		return kind == graph.KindClass
+	case graph.RelImplements:
+		return kind == graph.KindInterface
+	}
+	return false
 }
 
 // walk visits n and every descendant in pre-order.

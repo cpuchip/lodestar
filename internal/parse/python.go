@@ -37,7 +37,8 @@ func extractPython(p *fileCtx, root *sitter.Node) {
 		switch n.Type() {
 		case "function_definition":
 			if name := p.fieldText(n, "name"); name != "" {
-				p.addDecl(graph.KindFunction, name, nil)
+				id := p.addDecl(graph.KindFunction, name, nil)
+				p.recordPyCalls(id, n)
 			}
 		case "class_definition":
 			p.pyClass(n)
@@ -51,7 +52,8 @@ func extractPython(p *fileCtx, root *sitter.Node) {
 			switch def.Type() {
 			case "function_definition":
 				if name := p.fieldText(def, "name"); name != "" {
-					p.addDecl(graph.KindFunction, name, nil)
+					id := p.addDecl(graph.KindFunction, name, nil)
+					p.recordPyCalls(id, def)
 				}
 			case "class_definition":
 				p.pyClass(def)
@@ -66,13 +68,25 @@ func extractPython(p *fileCtx, root *sitter.Node) {
 }
 
 // pyClass emits the class node and its methods (Class.method), unwrapping any
-// decorated methods (e.g. @property) to their inner function_definition.
+// decorated methods (e.g. @property) to their inner function_definition. It also
+// records the deep-call-graph references: each positional base class as an
+// inherits ref, and each method body's calls. Python has no interface kind, so all
+// bases are inherits (resolved to a unique class only); there is no implements.
 func (p *fileCtx) pyClass(n *sitter.Node) {
 	name := p.fieldText(n, "name")
 	if name == "" {
 		return
 	}
-	p.addDecl(graph.KindClass, name, nil)
+	classID := p.addDecl(graph.KindClass, name, nil)
+	// inherits — positional bases in the superclasses argument_list. Keyword args
+	// (metaclass=...) and dynamic/subscripted bases (Generic[T], calls) are skipped.
+	if supers := n.ChildByFieldName("superclasses"); supers != nil {
+		for i := 0; i < int(supers.NamedChildCount()); i++ {
+			if base := pyBaseName(p, supers.NamedChild(i)); base != "" {
+				p.addRef(classID, base, graph.RelInherits)
+			}
+		}
+	}
 	body := n.ChildByFieldName("body")
 	if body == nil {
 		return
@@ -89,9 +103,37 @@ func (p *fileCtx) pyClass(n *sitter.Node) {
 			continue
 		}
 		if mn := p.fieldText(m, "name"); mn != "" {
-			p.addDecl(graph.KindMethod, name+"."+mn, map[string]string{"receiver": name})
+			id := p.addDecl(graph.KindMethod, name+"."+mn, map[string]string{"receiver": name})
+			p.recordPyCalls(id, m)
 		}
 	}
+}
+
+// recordPyCalls records a pending calls ref for every call in a Python function/
+// method body: the bare identifier (`helper()`) or the final attribute
+// (`self.setup()` -> "setup", `requests.get()` -> "get"). The object/module
+// operand is dropped — V1 resolves on the bare name, unique-match only.
+func (p *fileCtx) recordPyCalls(declID string, decl *sitter.Node) {
+	p.recordCalls(declID, decl.ChildByFieldName("body"), "call", func(n *sitter.Node) string {
+		_, name := pyCallTarget(p, n)
+		return name
+	})
+}
+
+// pyBaseName extracts a base-class name from a superclass expression: a bare
+// identifier, or the final attribute of a dotted name (a.b.Base -> "Base").
+// Anything else (keyword args, Generic[T] subscripts, dynamic expressions) yields
+// "" and is skipped.
+func pyBaseName(p *fileCtx, n *sitter.Node) string {
+	switch n.Type() {
+	case "identifier":
+		return n.Content(p.src)
+	case "attribute":
+		if a := n.ChildByFieldName("attribute"); a != nil {
+			return a.Content(p.src)
+		}
+	}
+	return ""
 }
 
 // recordImports stores the file's import module names as file-node metadata (not

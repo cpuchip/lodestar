@@ -55,7 +55,8 @@ func extractTS(p *fileCtx, root *sitter.Node) {
 			p.tsClass(n)
 		case "function_declaration", "generator_function_declaration":
 			if name := p.fieldText(n, "name"); name != "" {
-				p.addDecl(graph.KindFunction, name, nil)
+				id := p.addDecl(graph.KindFunction, name, nil)
+				p.recordTSCalls(id, n)
 			}
 		case "interface_declaration":
 			if name := p.fieldText(n, "name"); name != "" {
@@ -75,22 +76,100 @@ func extractTS(p *fileCtx, root *sitter.Node) {
 	}
 }
 
-// tsClass emits the class node and its methods (Class.method).
+// tsClass emits the class node and its methods (Class.method), plus the deep
+// call graph refs: extends -> inherits, implements -> implements, and each method
+// body's calls.
 func (p *fileCtx) tsClass(n *sitter.Node) {
 	name := p.fieldText(n, "name")
 	if name == "" {
 		return
 	}
-	p.addDecl(graph.KindClass, name, nil)
+	classID := p.addDecl(graph.KindClass, name, nil)
+	p.tsHeritage(classID, n)
 	body := n.ChildByFieldName("body")
 	if body == nil {
 		return
 	}
 	for _, m := range namedChildrenOfType(body, "method_definition") {
 		if mn := p.fieldText(m, "name"); mn != "" {
-			p.addDecl(graph.KindMethod, name+"."+mn, map[string]string{"receiver": name})
+			id := p.addDecl(graph.KindMethod, name+"."+mn, map[string]string{"receiver": name})
+			p.recordTSCalls(id, m)
 		}
 	}
+}
+
+// tsHeritage records inherits (extends) and implements refs from a class's
+// class_heritage. TS wraps them as extends_clause / implements_clause; JS's
+// class_heritage holds the superclass expression directly (extends only, no
+// implements). Each target is reduced to a bare name (Base, the final segment of
+// proto.Base, or the head of Base<T>); anything else yields no ref.
+func (p *fileCtx) tsHeritage(classID string, class *sitter.Node) {
+	for i := 0; i < int(class.NamedChildCount()); i++ {
+		h := class.NamedChild(i)
+		if h.Type() != "class_heritage" {
+			continue
+		}
+		for j := 0; j < int(h.NamedChildCount()); j++ {
+			hc := h.NamedChild(j)
+			switch hc.Type() {
+			case "extends_clause":
+				// first expression child is the superclass (a trailing
+				// type_arguments node yields no name, so break on first hit).
+				for k := 0; k < int(hc.NamedChildCount()); k++ {
+					if base := tsTypeName(p, hc.NamedChild(k)); base != "" {
+						p.addRef(classID, base, graph.RelInherits)
+						break
+					}
+				}
+			case "implements_clause":
+				for k := 0; k < int(hc.NamedChildCount()); k++ {
+					if iface := tsTypeName(p, hc.NamedChild(k)); iface != "" {
+						p.addRef(classID, iface, graph.RelImplements)
+					}
+				}
+			default:
+				// JS: class_heritage holds the superclass expression directly.
+				if base := tsTypeName(p, hc); base != "" {
+					p.addRef(classID, base, graph.RelInherits)
+				}
+			}
+		}
+	}
+}
+
+// recordTSCalls records a pending calls ref for every call in a TS/JS function/
+// method body: the bare identifier (`helper()`) or the final property
+// (`this.setup()` -> "setup", `console.log()` -> "log"). The object operand is
+// dropped — V1 resolves on the bare name, unique-match only.
+func (p *fileCtx) recordTSCalls(declID string, decl *sitter.Node) {
+	p.recordCalls(declID, decl.ChildByFieldName("body"), "call_expression", func(n *sitter.Node) string {
+		_, name := tsCallTarget(p, n)
+		return name
+	})
+}
+
+// tsTypeName reduces a heritage type/expression node to a bare name: an
+// identifier / type_identifier passes through; a member_expression yields its
+// final property; a generic_type yields its underlying type name. Other shapes
+// yield "" (skipped — precision over recall).
+func tsTypeName(p *fileCtx, n *sitter.Node) string {
+	switch n.Type() {
+	case "identifier", "type_identifier", "property_identifier":
+		return n.Content(p.src)
+	case "member_expression":
+		if pr := n.ChildByFieldName("property"); pr != nil {
+			return pr.Content(p.src)
+		}
+	case "nested_type_identifier":
+		if nm := n.ChildByFieldName("name"); nm != nil {
+			return nm.Content(p.src)
+		}
+	case "generic_type":
+		if nm := n.ChildByFieldName("name"); nm != nil {
+			return tsTypeName(p, nm)
+		}
+	}
+	return ""
 }
 
 // tsImportSource returns the module specifier of an import statement.

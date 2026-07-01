@@ -35,7 +35,8 @@ func extractGo(p *fileCtx, root *sitter.Node) {
 		switch n.Type() {
 		case "function_declaration":
 			if name := p.fieldText(n, "name"); name != "" {
-				p.addDecl(graph.KindFunction, name, nil)
+				id := p.addDecl(graph.KindFunction, name, nil)
+				p.recordGoCalls(id, n)
 			}
 		case "method_declaration":
 			name := p.fieldText(n, "name")
@@ -49,7 +50,8 @@ func extractGo(p *fileCtx, root *sitter.Node) {
 				full = recv + "." + name
 				meta["receiver"] = recv
 			}
-			p.addDecl(graph.KindMethod, full, meta)
+			id := p.addDecl(graph.KindMethod, full, meta)
+			p.recordGoCalls(id, n)
 		case "type_declaration":
 			for _, spec := range namedChildrenOfType(n, "type_spec") {
 				name := p.fieldTextOf(spec, "name")
@@ -80,6 +82,23 @@ func extractGo(p *fileCtx, root *sitter.Node) {
 			}
 		}
 	}
+}
+
+// recordGoCalls records a pending calls ref for every function call in a Go
+// function/method body. The callee is the bare identifier (`foo()`) or the final
+// selector segment (`s.setup()` -> "setup", `fmt.Println()` -> "Println"); the
+// receiver/package operand is intentionally dropped — V1 resolves on the bare name
+// and emits only when it is unique in the world, so a stdlib callee like Println
+// (no world symbol) yields no edge.
+//
+// Go inheritance is deliberately NOT modeled: Go has no class inheritance, and
+// struct/interface embedding is a materially different relation than
+// inherits/implements — better omitted than mislabeled.
+func (p *fileCtx) recordGoCalls(declID string, decl *sitter.Node) {
+	p.recordCalls(declID, decl.ChildByFieldName("body"), "call_expression", func(n *sitter.Node) string {
+		_, verb := goCallTarget(p, n)
+		return verb
+	})
 }
 
 // goReceiverType pulls the receiver type name off a method_declaration, stripping
