@@ -47,7 +47,7 @@ type fileCtx struct {
 
 // Languages returns the configured language set.
 func Languages() []Language {
-	return []Language{goLanguage(), protoLanguage()}
+	return []Language{goLanguage(), protoLanguage(), pythonLanguage(), tsLanguage(), jsLanguage()}
 }
 
 // langForPath returns the Language that owns a file, or nil.
