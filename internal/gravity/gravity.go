@@ -18,6 +18,11 @@ import (
 var protocolWeight = map[string]float64{
 	"http": 1.0, "grpc": 1.0, "pubsub": 0.5,
 	"schema": 2.0, "db": 3.0, "config": 1.5, "package": 1.5,
+	// k8s: a declared deploy-time service dependency (Helm values *_HOST/_ADDR ref)
+	// — a direct runtime bind, heavier than an ad-hoc call, on par with a shared
+	// schema. (Tunable — Michael, 2026-07-01: "if it's a direct service dep the
+	// gravity should be higher, 1.5 maybe even 2 — we should play with that.")
+	"k8s": 2.0,
 }
 
 func weightOf(protocol string) float64 {
