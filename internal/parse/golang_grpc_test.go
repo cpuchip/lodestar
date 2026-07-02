@@ -103,3 +103,62 @@ func TestExtractGoGRPC(t *testing.T) {
 		t.Errorf("proto schema metadata = %v, want package=oteldemo methods='GetProduct ListProducts'", catalog.Metadata)
 	}
 }
+
+// A _test.go fixture that registers a REAL service name (grpc.NewServer +
+// RegisterShippingServiceServer) is the gap the name-based mock filter cannot
+// close — "ShippingService" is not a Mock/Fake/Stub name. The file-level test
+// skip (lodestar #9) is what stops that fixture from forging a producer that would
+// pair into a false cross-service edge. The production file's registration must
+// still extract (recall), and the test file's must not (precision). Inverse
+// hypothesis: drop the isTestFile guard in parseFile and this test fails — the
+// fixture leaks ShippingService as a producer.
+func TestSkipTestFileContracts(t *testing.T) {
+	const prodGo = `package svc
+
+import "example.com/pb"
+
+func serve(s *grpc.Server, impl pb.ProductCatalogServiceServer) {
+	pb.RegisterProductCatalogServiceServer(s, impl)
+}
+`
+	// A hand-written test fixture: a real in-process server for a real service name.
+	const fixtureGo = `package svc
+
+import "example.com/pb"
+
+func spinUpShipping(s *grpc.Server, impl pb.ShippingServiceServer) {
+	pb.RegisterShippingServiceServer(s, impl) // fixture — must NOT become a producer
+}
+`
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "grpc.go"), []byte(prodGo), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "server_test.go"), []byte(fixtureGo), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g, err := ParseDir("svc", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	producers := map[string]bool{}
+	sawTestSkeleton := false
+	for _, n := range g.Nodes {
+		if n.Kind == graph.KindGRPCService {
+			producers[n.Name] = true
+		}
+		if n.Kind == graph.KindFile && n.Name == "server_test.go" {
+			sawTestSkeleton = true // structural extraction still runs on test files
+		}
+	}
+	if !producers["ProductCatalogService"] {
+		t.Errorf("recall: production RegisterProductCatalogServiceServer must still be a producer (got %v)", keys(producers))
+	}
+	if producers["ShippingService"] {
+		t.Errorf("precision: a _test.go fixture registration must NOT be a producer (ShippingService leaked from server_test.go)")
+	}
+	if !sawTestSkeleton {
+		t.Errorf("the test file's structural skeleton should still be emitted (only contracts are gated), but no server_test.go file node was found")
+	}
+}
