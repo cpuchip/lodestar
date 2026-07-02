@@ -84,6 +84,13 @@ const (
 	// Directional: consumer connects_to producer.
 	KindService    = "service"     // producer — a deployable service a chart defines
 	KindServiceRef = "service_ref" // consumer — a values/env reference to another service by name
+	// Package/module coupling (the library backbone): a repo PUBLISHES a module
+	// (its go.mod `module` line) and REQUIRES others (go.mod `require`s). Directional:
+	// the requiring repo depends_on the published module. This is the compile-time
+	// coupling — a shared lib pulled into many repos carries heavy but otherwise-
+	// invisible gravity — that the runtime resolvers (http/grpc/pubsub) can't see.
+	KindPackagePublish = "package_publish" // producer — the module path a repo publishes
+	KindPackageDep     = "package_dep"     // consumer — a module a repo's go.mod requires
 )
 
 // Intra-world edge relations.

@@ -68,6 +68,19 @@ var pairings = []pairing{
 		confidence:    0.8,
 		isNoise:       isServiceRefNoise,
 	},
+	{
+		// Library backbone: a repo's go.mod require ↔ the repo that publishes that
+		// module. The requiring repo depends_on the published module. A shared lib
+		// pulled into many repos becomes a heavy gravity center (protocol `package`,
+		// weight 1.5) — the compile-time coupling the runtime resolvers miss.
+		producerKind:  graph.KindPackagePublish,
+		consumerKind:  graph.KindPackageDep,
+		rel:           "depends_on",
+		protocol:      "package",
+		srcIsProducer: false, // consumer (requiring repo) → producer (published module)
+		confidence:    0.95,  // a go.mod require is an exact, certain dependency
+		isNoise:       nil,
+	},
 }
 
 // infraServices are shared infrastructure a values ref may name (a DB, broker,
