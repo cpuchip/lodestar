@@ -168,8 +168,18 @@ func parseFile(g *graph.Graph, pending *[]pendingRef, world, rel, absPath string
 	p := &fileCtx{world: world, rel: rel, src: src, fileID: fileID, g: g, seen: map[string]bool{fileID: true}, refs: pending}
 	root := tree.RootNode()
 	lang.extract(p, root)
-	for _, extractContracts := range lang.contracts {
-		extractContracts(p, root)
+	// Skip CONTRACT extraction for test files. Test fixtures — an in-process mock
+	// server (`grpc.NewServer(); pb.RegisterFooServer(...)`), a client against a
+	// stub, an in-memory broker — emit producer/consumer nodes that pair by
+	// normalized key into FALSE cross-service edges (the grpc test-fixture "hub").
+	// The name-based mock filter (grpcServiceFrom*Ctor) catches NewMockFooClient but
+	// NOT a REAL service name registered inside a _test.go, so the gap is file-level.
+	// Structural extraction above still runs, so the test skeleton stays navigable;
+	// only the cross-service contract layer is gated. (lodestar #9.)
+	if !isTestFile(rel) {
+		for _, extractContracts := range lang.contracts {
+			extractContracts(p, root)
+		}
 	}
 	return nil
 }
@@ -369,6 +379,57 @@ func skipFile(name string) bool {
 		".pb.ts", "_pb.ts", ".pb.js", "_pb.js", // TS/JS protobuf
 	} {
 		if strings.HasSuffix(name, suf) {
+			return true
+		}
+	}
+	return false
+}
+
+// isTestFile reports whether a repo-relative path is a test file, by the strong
+// per-language naming / directory conventions. It gates CONTRACT extraction only
+// (see parseFile) — test fixtures forge producer/consumer contracts that pair into
+// false cross-service edges. Precision matters in BOTH directions here: a missed
+// test file re-pollutes the graph, but a PRODUCTION file misread as a test loses
+// real contracts, so the patterns are only the language-enforced / near-universal
+// ones. Case is deliberate: Go/Python/TS use lowercase conventions, but Java/C#
+// key on the CamelCase "Test" segment — matching lowercase there would eat
+// production names like Latest.java / Contest.cs (which end in "test" as a
+// substring, not as a word).
+func isTestFile(rel string) bool {
+	rel = filepath.ToSlash(rel)
+	base := rel
+	if i := strings.LastIndexByte(base, '/'); i >= 0 {
+		base = base[i+1:]
+	}
+	// Fixture / test-tree directories (any segment).
+	segs := strings.Split(rel, "/")
+	for i, seg := range segs {
+		switch seg {
+		case "testdata", "__tests__", "__mocks__": // Go fixtures, Jest test/mock trees
+			return true
+		}
+		if seg == "src" && i+1 < len(segs) && (segs[i+1] == "test" || segs[i+1] == "tests") {
+			return true // Maven/Gradle src/test/...
+		}
+	}
+	lb := strings.ToLower(base)
+	switch {
+	case strings.HasSuffix(lb, "_test.go"): // Go (language-enforced)
+		return true
+	case strings.HasSuffix(lb, "_test.py"), strings.HasPrefix(lb, "test_") && strings.HasSuffix(lb, ".py"), lb == "conftest.py": // pytest
+		return true
+	}
+	for _, suf := range []string{ // Jest / Vitest / Jasmine
+		".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx",
+		".test.js", ".spec.js", ".test.jsx", ".spec.jsx",
+	} {
+		if strings.HasSuffix(lb, suf) {
+			return true
+		}
+	}
+	// Java / C#: CamelCase "Test"/"Tests" suffix — original case (see doc comment).
+	for _, suf := range []string{"Test.java", "Tests.java", "Test.cs", "Tests.cs"} {
+		if strings.HasSuffix(base, suf) {
 			return true
 		}
 	}
