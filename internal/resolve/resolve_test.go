@@ -88,6 +88,28 @@ func TestResolveGRPC(t *testing.T) {
 	}
 }
 
+// #6: a generic world name (gateway) must NOT become a k8s false-hub via NAME-based
+// pairing, yet must STILL pair on an EXACT module path (the package resolver is
+// name-agnostic). Proves the generic-name denylist is scoped to the k8s resolver only.
+func TestResolveGenericNameNoFalseHub(t *testing.T) {
+	g := &graph.Graph{
+		Worlds: []string{"gw-repo", "app"},
+		Nodes: []graph.Node{
+			{ID: "gw-repo::svc::gateway", World: "gw-repo", Kind: graph.KindService, Name: "gateway"},                    // generic-name producer
+			{ID: "app::ref::gateway", World: "app", Kind: graph.KindServiceRef, Name: "gateway"},                         // GATEWAY_HOST: gateway
+			{ID: "gw-repo::pub::mod", World: "gw-repo", Kind: graph.KindPackagePublish, Name: "example.com/pl/gateway"},  // exact module path
+			{ID: "app::dep::mod", World: "app", Kind: graph.KindPackageDep, Name: "example.com/pl/gateway"},              // require it
+		},
+	}
+	Resolve(g)
+	if k8s := edgesOn(g, "gateway"); len(k8s) != 0 {
+		t.Errorf("generic name 'gateway' must not become a k8s edge, got %d: %+v", len(k8s), k8s)
+	}
+	if pkg := edgesOn(g, "example.com/pl/gateway"); len(pkg) != 1 || pkg[0].Protocol != "package" || pkg[0].Rel != "depends_on" {
+		t.Errorf("exact module path must still pair (package resolver unaffected by the name denylist), got %+v", pkg)
+	}
+}
+
 // --- symmetric couplings: config/env + shared-DB ---
 
 func cfg(world, name, suffix string) graph.Node {
