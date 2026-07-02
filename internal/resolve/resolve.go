@@ -96,8 +96,31 @@ var infraServices = map[string]bool{
 	"database": true, "queue": true,
 }
 
-// isServiceRefNoise drops references to shared infrastructure (not app services).
-func isServiceRefNoise(key string) bool { return infraServices[key] }
+// genericServiceNames are repo/world names too generic to be a distinct service:
+// a world literally named `grpc`/`gateway`/`common` collects k8s-values name matches
+// it doesn't deserve (every repo's `GATEWAY_HOST`, every `common` ref collides on the
+// bare token) and becomes a false gravity center — one real corpus showed a `grpc`
+// world with 66–138 inbound edges, warping the layout and the modularity read. These
+// names are excluded from NAME-BASED pairing (k8s service refs) ONLY. Exact key-joins
+// are unaffected: a repo publishing module `example.com/pl/gateway` still pairs on the
+// exact module path (package resolver), and a gRPC service name from generated code is
+// precise regardless of the repo's name — so a genuinely-named service keeps those edges.
+//
+// ★ Same false-drop-risk class as parse.isMockName (docs/known-limitations.md): a REAL
+// service whose name is exactly one of these loses its k8s (values-ref) edges — but keeps
+// its exact-join edges. Tunable set; watch for a legit service losing k8s coupling on the
+// real corpus. Conservative on purpose — omits service-like names (frontend/backend/
+// server/service/worker/auth/user…) that are commonly real.
+var genericServiceNames = map[string]bool{
+	"grpc": true, "gateway": true, "runner": true, "common": true, "web": true,
+	"api": true, "proxy": true, "lib": true, "libs": true, "core": true,
+	"shared": true, "util": true, "utils": true, "base": true, "internal": true,
+	"pkg": true, "sdk": true, "tools": true,
+}
+
+// isServiceRefNoise drops k8s service-ref keys that are shared infrastructure (a DB /
+// broker / cache) or too generic a name to be a real service — neither is a coupling.
+func isServiceRefNoise(key string) bool { return infraServices[key] || genericServiceNames[key] }
 
 // symmetricPairing describes a coupling with no producer/consumer direction: a key
 // (an env var, a table name) that appears in ≥2 worlds means those worlds are bound.
